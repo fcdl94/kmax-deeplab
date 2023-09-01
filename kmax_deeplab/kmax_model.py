@@ -225,6 +225,7 @@ class kMaXDeepLab(nn.Module):
         """
         images = [x["image"].to(self.device) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
+        ## fixme Pad the images to input space defined in config... why?
         if "is_real_pixels" in batched_inputs[0]:
             is_real_pixels = [x["is_real_pixels"] for x in batched_inputs]
             # Set all padded pixel values to 0.
@@ -232,13 +233,14 @@ class kMaXDeepLab(nn.Module):
 
         # We perform zero padding to ensure input shape equal to self.input_shape.
         # The padding is done on the right and bottom sides. 
+        ## fixme Pad the images to input space defined in config... why?
         for idx in range(len(images)):
             cur_height, cur_width = images[idx].shape[-2:]
             padding = (0, max(0, self.input_shape[1] - cur_width), 0, max(0, self.input_shape[0] - cur_height), 0, 0)
             images[idx] = F.pad(images[idx], padding, value=0)
         images = ImageList.from_tensors(images, -1)
 
-        if self.training:
+        if self.training:  # targets are only istances and sem_seg_gt
             # mask classification target
             if "instances" in batched_inputs[0]:
                 gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
@@ -251,16 +253,20 @@ class kMaXDeepLab(nn.Module):
                 targets = None
 
         input_tensor = images.tensor
-        if self.channel_last_format:
+        if self.channel_last_format:  # why this? does it speed things up?
             input_tensor = input_tensor.to(memory_format=torch.channels_last)
         features = self.backbone(input_tensor)
         outputs = self.sem_seg_head(features)
 
         if self.training:
 
-            with autocast(enabled=False):
+            with autocast(enabled=False): # why does it remove autocast?
                 # bipartite matching-based loss
-                for output_key in ["pixel_feature", "pred_masks", "pred_logits", "aux_semantic_pred"]:
+                # pixel featues: gen by ... used in ...
+                # pred_masks: gen by ... used in ...
+                # pred_logits: gen by ... used in ...
+                # aux_semantic_pred: gen by ... used in ...
+                for output_key in ["pixel_feature", "pred_masks", "pred_logits", "aux_semantic_pred"]: 
                     if output_key in outputs:
                         outputs[output_key] = outputs[output_key].float()
                 for i in range(len(outputs["aux_outputs"])):
@@ -269,7 +275,7 @@ class kMaXDeepLab(nn.Module):
                 
                 losses = self.criterion(outputs, targets)
 
-                for k in list(losses.keys()):
+                for k in list(losses.keys()):  # should be 5 losses: CE, Dice, Mask, Aux SemSeg, InstDis (contrastive)
                     if k in self.criterion.weight_dict:
                         losses[k] *= self.criterion.weight_dict[k]
                     else:

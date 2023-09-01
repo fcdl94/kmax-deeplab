@@ -96,28 +96,24 @@ def _compute_relative_distance_matrix(query_length, key_length):
     distance_matrix = distance_matrix + MAX_SPAN - 1
     return distance_matrix
 
-
 class RelativePositionalEncoding(nn.Module):
-    def __init__(self, query_length, key_length, depth):
+    def __init__(self, depth):
         super().__init__()
         self._embeddings = nn.Embedding(MAX_SPAN * 2 - 1, depth)
         trunc_normal_(self._embeddings.weight, std=1.0)
-        self._relative_distance_matrix = _compute_relative_distance_matrix(query_length, key_length)
-        self.query_length = query_length
-        self.key_length = key_length
         self.depth = depth
 
-    def forward(self):
-        return self._embeddings.weight[self._relative_distance_matrix.reshape(-1)].reshape(self.query_length, self.key_length, self.depth)
+    def forward(self, query_lenght, key_length):
+        _relative_distance_matrix = _compute_relative_distance_matrix(query_length, key_length)
+        return self._embeddings.weight[self._relative_distance_matrix.reshape(-1)].reshape(query_length, key_length, self.depth)
 
 
 # https://github.com/google-research/deeplab2/blob/main/model/layers/axial_layers.py#L36
 class AxialAttention(nn.Module):
-    def __init__(self, in_planes, query_shape=56, total_key_depth=512, total_value_depth=1024, num_heads=8):
+    def __init__(self, in_planes, total_key_depth=512, total_value_depth=1024, num_heads=8):
         assert (total_key_depth % num_heads == 0) and (total_value_depth % num_heads == 0)
         super().__init__()
         self._in_planes = in_planes
-        self._query_shape = query_shape
         self._total_key_depth = total_key_depth
         self._total_value_depth = total_value_depth
         self._num_heads = num_heads
@@ -127,9 +123,9 @@ class AxialAttention(nn.Module):
                                        padding=0, bias=False, norm=None, act=None, conv_type='1d')
         trunc_normal_(self.qkv_transform.conv.weight, std=in_planes ** -0.5)
 
-        self._query_rpe = RelativePositionalEncoding(query_shape, query_shape, self._key_depth_per_head)
-        self._key_rpe = RelativePositionalEncoding(query_shape, query_shape, self._key_depth_per_head)
-        self._value_rpe = RelativePositionalEncoding(query_shape, query_shape, total_value_depth // num_heads)
+        self._query_rpe = RelativePositionalEncoding(self._key_depth_per_head)
+        self._key_rpe = RelativePositionalEncoding(self._key_depth_per_head)
+        self._value_rpe = RelativePositionalEncoding(total_value_depth // num_heads)
 
         self._batch_norm_qkv = get_norm('syncbn', self._total_key_depth * 2 + self._total_value_depth)
         self._batch_norm_similarity = get_norm('syncbn', num_heads * 3)
@@ -146,9 +142,9 @@ class AxialAttention(nn.Module):
 
         similarity_logits = []
         content_similarity = torch.einsum('bhdl,bhdm->bhlm', q, k)
-        query_rpe = self._query_rpe()
+        query_rpe = self._query_rpe(L, L)
         query_rpe_similarity = torch.einsum('bhdl,lmd->bhlm', q, query_rpe)
-        key_rpe = self._key_rpe()
+        key_rpe = self._key_rpe(L, L)
         key_rpe_similarity = torch.einsum('bhdm,lmd->bhlm', k, key_rpe)
         similarity_logits = torch.cat([content_similarity, query_rpe_similarity, key_rpe_similarity], dim=1)
         similarity_logits = self._batch_norm_similarity(similarity_logits).reshape(N, 3, self._num_heads, L, L).sum(dim=1)
@@ -157,7 +153,7 @@ class AxialAttention(nn.Module):
             weights = F.softmax(similarity_logits.float(), dim=-1)
 
         retrieved_content = torch.einsum('bhlm,bhdm->bhdl', weights, v)
-        value_rpe = self._value_rpe()
+        value_rpe = self._value_rpe(L, L)
         retrieved_rpe = torch.einsum('bhlm,lmd->bhdl', weights, value_rpe)
 
         retrieved_output = torch.cat([retrieved_content, retrieved_rpe], dim=1).reshape(N, 2*self._total_value_depth, L)
@@ -168,21 +164,19 @@ class AxialAttention(nn.Module):
 
 # https://github.com/google-research/deeplab2/blob/main/model/layers/axial_layers.py#L316
 class AxialAttention2D(nn.Module):
-    def __init__(self, in_planes, query_shape=[56, 56], filters=512, key_expansion=1, value_expansion=2, num_heads=8):
+    def __init__(self, in_planes, filters=512, key_expansion=1, value_expansion=2, num_heads=8):
         super().__init__()
-        total_key_depth = int(round(filters * key_expansion))
-        total_value_depth = int(round(filters * value_expansion))
-        self._total_key_depth = total_key_depth
+        total_key_depth = int(round(filters * key_expansion)) # 1
+        total_value_depth = int(round(filters * value_expansion)) # 2
+        self._total_key_depth = total_key_depth 
         self._total_value_depth = total_value_depth
         self._height_axis = AxialAttention(
             in_planes=in_planes,
-            query_shape=query_shape[0],
             total_key_depth=total_key_depth,
             total_value_depth=total_value_depth,
             num_heads=num_heads)
         self._width_axis = AxialAttention(
             in_planes=total_value_depth,
-            query_shape=query_shape[1],
             total_key_depth=total_key_depth,
             total_value_depth=total_value_depth,
             num_heads=num_heads)
@@ -190,28 +184,29 @@ class AxialAttention2D(nn.Module):
     def forward(self, x):
         # N C H W -> N W C H
         N, C, H, W = x.shape
-        x = x.permute(0, 3, 1, 2).contiguous()
-        x = x.reshape(N*W, C, H)
-        x = self._height_axis(x)
+        x = x.permute(0, 3, 1, 2).contiguous()  # channel last
+        x = x.reshape(N*W, C, H)  # merge batch size and widht 
+        x = self._height_axis(x)  # compute axial height attention
         # N W C H -> N H C W
-        x = x.reshape(N, W, self._total_value_depth, H).permute(0, 3, 2, 1).contiguous()
+        x = x.reshape(N, W, self._total_value_depth, H).permute(0, 3, 2, 1).contiguous() # prepare for width
         x = x.reshape(N*H, self._total_value_depth, W)
-        x = self._width_axis(x)
-        x = x.reshape(N, H, self._total_value_depth, W).permute(0, 2, 1, 3).contiguous()
-        x = x.reshape(N, self._total_value_depth, H, W)
+        x = self._width_axis(x)  # compute width
+        x = x.reshape(N, H, self._total_value_depth, W).permute(0, 2, 1, 3).contiguous() 
+        x = x.reshape(N, self._total_value_depth, H, W) # back to original shape
         return x
 
 
 # https://github.com/google-research/deeplab2/blob/main/model/layers/axial_blocks.py#L36
 class SingleBlock(nn.Module):
 
-    def __init__(self, inplanes, filter_list, block_type, query_shape=[56, 56], key_expansion=1, value_expansion=2, num_heads=8, drop_path_prob=0.0):
+    def __init__(self, inplanes, filter_list, block_type, key_expansion=1, value_expansion=2, num_heads=8, drop_path_prob=0.0):
         super(SingleBlock, self).__init__()
         self._block_type = block_type.lower()
-        self._filter_list = filter_list
+        self._filter_list = filter_list # dec_channel[i] x 2, x 1, x 4
         self._conv1_bn_act = ConvBN(inplanes, self._filter_list[0], kernel_size=1, bias=False, norm='syncbn', act='gelu')
         if self._block_type == 'axial':
-            self._attention = AxialAttention2D(in_planes=self._filter_list[0], query_shape=query_shape, filters=self._filter_list[1],
+            # Here there is query shape, a constant parameter indicating the shape of the activations
+            self._attention = AxialAttention2D(in_planes=self._filter_list[0], filters=self._filter_list[1],
                                                 key_expansion=key_expansion, value_expansion=value_expansion, num_heads=num_heads)
             output_channel = filter_list[1] * value_expansion
         elif self._block_type == 'bottleneck':
@@ -315,19 +310,11 @@ class kMaXPixelDecoder(nn.Module):
         Args:
         """
         super().__init__()
-        self.num_stages = len(input_shape)
-        assert self.num_stages == len(dec_layers) and self.num_stages == len(dec_channels) and self.num_stages == len(layer_types)
-        input_shape = sorted(input_shape.items(), key=lambda x: -x[1].stride)
+        self.num_stages = len(input_shape) # stem, r2, r3, r4, r5 -> 5
+        assert self.num_stages == len(dec_layers) and self.num_stages == len(dec_channels) and self.num_stages == len(layer_types)  # 1 axial, 5 axial, 1 bottleneck, 1 bottleneck, 1 bottleneck
+        input_shape = sorted(input_shape.items(), key=lambda x: -x[1].stride)  # sor by -stride, i.e. starting from "res5" to "res2"/"stem"
         self.in_features = [k for k, v in input_shape] # starting from "res5" to "res2"/"stem"
         in_channels = [v.channels for k, v in input_shape]
-
-        add_one = (spatial_shape[0] % 2, spatial_shape[1] % 2)
-        query_shape = [
-            (spatial_shape[0]//32+add_one[0], spatial_shape[1]//32+add_one[1]),
-            (spatial_shape[0]//16+add_one[0], spatial_shape[1]//16+add_one[1]),
-            (spatial_shape[0]//8+add_one[0], spatial_shape[1]//8+add_one[1]),
-            (spatial_shape[0]//4+add_one[0], spatial_shape[1]//4+add_one[1]),
-            (spatial_shape[0]//2+add_one[0], spatial_shape[1]//2+add_one[1])]
 
         self._in_norms = nn.ModuleList()
         self._stages = nn.ModuleList()
@@ -338,11 +325,11 @@ class kMaXPixelDecoder(nn.Module):
             inplanes = in_channels[i] if i == 0 else dec_channels[i]
             self._stages.append(BlockGroup(inplanes=inplanes,
                 base_filter=dec_channels[i], num_blocks=dec_layers[i], block_type=layer_types[i],
-                query_shape=query_shape[i], key_expansion=1, value_expansion=2, num_heads=8, drop_path_prob=drop_path_prob))
+                key_expansion=1, value_expansion=2, num_heads=8, drop_path_prob=drop_path_prob))
 
             if i > 0:
                 self._resized_fuses.append(ResizedFuse(
-                    low_in_channels=dec_channels[i-1] * 4,
+                    low_in_channels=dec_channels[i-1] * 4,  # Why times 4? The blocks outputs something 4x? see stages
                     high_in_channels=in_channels[i],
                     out_channels=dec_channels[i]))
 
