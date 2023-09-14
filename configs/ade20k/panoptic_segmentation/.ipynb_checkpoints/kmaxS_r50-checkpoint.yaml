@@ -3,9 +3,9 @@ MODEL:
   BACKBONE:
     FREEZE_AT: 0
     NAME: "custom_bn_build_resnet_backbone" # we customize the momentum and eps in syncbn, to align with tf implementation.
-  WEIGHTS: "../R-50.pkl"
-  PIXEL_MEAN: [127.5, 127.5, 127.5]
-  PIXEL_STD: [127.5, 127.5, 127.5]
+  WEIGHTS: "pretrained_models/R-50.pkl"
+  PIXEL_MEAN: [123.675, 116.280, 103.530]
+  PIXEL_STD: [58.395, 57.120, 57.375]
   RESNETS:
     DEPTH: 50
     STEM_TYPE: "basic"  # not used
@@ -20,7 +20,7 @@ MODEL:
   SEM_SEG_HEAD:
     NAME: "kMaXDeepLabHead"
     IGNORE_VALUE: 255
-    NUM_CLASSES: 133
+    NUM_CLASSES: 150
     LOSS_WEIGHT: 1.0
 
   KMAX_DEEPLAB:
@@ -32,7 +32,7 @@ MODEL:
     DICE_WEIGHT: 3.0
     MASK_WEIGHT: 0.3
     INSDIS_WEIGHT: 1.0
-    AUX_SEMANTIC_WEIGHT: 1.0
+    AUX_SEMANTIC_WEIGHT: 0.0
 
     PIXEL_DEC:
       NAME: "kMaXPixelDecoder"
@@ -46,27 +46,27 @@ MODEL:
       DEC_LAYERS: [2, 2, 2]
       NUM_OBJECT_QUERIES: 128
       IN_CHANNELS: [2048, 1024, 512, 256] # [512 * 4, 256 * 4, 128 * 4], the last dim is for final prediction
-      DROP_PATH_PROB: 0.2
+      DROP_PATH_PROB: 0.0
 
     TEST:
-      SEMANTIC_ON: False
+      SEMANTIC_ON: True
       INSTANCE_ON: False
       PANOPTIC_ON: True
       PIXEL_CONFIDENCE_THRESHOLD: 0.4
-      CLASS_THRESHOLD_THING: 0.7
-      CLASS_THRESHOLD_STUFF: 0.5
+      CLASS_THRESHOLD_THING: 0.4
+      CLASS_THRESHOLD_STUFF: 0.4
       REORDER_CLASS_WEIGHT: 1.0
       REORDER_MASK_WEIGHT: 1.0
       OVERLAP_THRESHOLD: 0.8
 
 DATASETS:
-  TRAIN: ("coco_2017_train_panoptic",)
-  TEST: ("coco_2017_val_panoptic_with_sem_seg",)
+  TRAIN: ("ade20k_panoptic_train",)
+  TEST: ("ade20k_panoptic_val",)
 SOLVER:
   IMS_PER_BATCH: 16
   BASE_LR: 0.0001
   LR_SCHEDULER_NAME: "TF2WarmupPolyLR"
-  MAX_ITER: 180000
+  MAX_ITER: 160000
   WARMUP_ITERS: 5000
   WEIGHT_DECAY: 0.05
   OPTIMIZER: "ADAMW"
@@ -75,17 +75,32 @@ SOLVER:
     ENABLED: False
   AMP:
     ENABLED: True
+# INPUT:
+#   IMAGE_SIZE: [640, 640]
+#   MIN_SCALE: 0.5
+#   MAX_SCALE: 2.0
+#   FORMAT: "RGB"
+#   DATASET_MAPPER_NAME: "ade20k_panoptic_lsj"
+#   MIN_SIZE_TEST: 640
+#   MAX_SIZE_TEST: 640
 INPUT:
   IMAGE_SIZE: [640, 640]
-  MIN_SCALE: 0.2
-  MAX_SCALE: 2.0
-  FORMAT: "RGB"
-  DATASET_MAPPER_NAME: "coco_panoptic_lsj"
+  MIN_SIZE_TRAIN: !!python/object/apply:eval ["[int(x * 0.1 * 640) for x in range(5, 21)]"]
+  MIN_SIZE_TRAIN_SAMPLING: "choice"
   MIN_SIZE_TEST: 640
-  MAX_SIZE_TEST: 640
+  MAX_SIZE_TRAIN: 2560
+  MAX_SIZE_TEST: 2560
+  CROP:
+    ENABLED: True
+    TYPE: "absolute"
+    SIZE: (640, 640)
+    SINGLE_CATEGORY_MAX_AREA: 1.0
+  SIZE_DIVISIBILITY: 640  # used in dataset mapper
+  FORMAT: "RGB"
+  DATASET_MAPPER_NAME: "panoptic_mapper"
 TEST:
   EVAL_PERIOD: 5000
 DATALOADER:
   FILTER_EMPTY_ANNOTATIONS: True
-  NUM_WORKERS: 4
+  NUM_WORKERS: 8
 VERSION: 2

@@ -473,7 +473,7 @@ class kMaXTransformerDecoder(nn.Module):
     @torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_seg_masks, outputs_pixel_feature):
         target_size = outputs_seg_masks[-1].shape[-2:]
-        align_corners = (target_size[0] % 2 == 1)
+        align_corners = False
         return [
             {"pred_logits": a, "pred_masks": F.interpolate(b, size=target_size, mode="bilinear", align_corners=align_corners),
             "pixel_feature": F.interpolate(c, size=target_size, mode="bilinear", align_corners=align_corners),}

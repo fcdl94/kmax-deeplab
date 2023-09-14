@@ -16,6 +16,7 @@ except:
 import copy
 import itertools
 import os
+import wandb
 
 from typing import Any, Dict, List, Set
 
@@ -45,7 +46,7 @@ from detectron2.utils.logger import setup_logger
 
 
 from kmax_deeplab import (
-    PanoptickMaXDeepLabDatasetMapper,
+    PanopticDatasetMapper, PanoptickMaXDeepLabDatasetMapper,
     add_kmax_deeplab_config,
     InstanceSegEvaluator,
 )
@@ -132,6 +133,9 @@ class Trainer(DefaultTrainer):
             "cityscapes_panoptic_lsj"
             ]:
             mapper = PanoptickMaXDeepLabDatasetMapper(cfg, True)
+            return build_detection_train_loader(cfg, mapper=mapper)
+        elif cfg.INPUT.DATASET_MAPPER_NAME == 'panoptic_mapper':
+            mapper = PanopticDatasetMapper(cfg, True)
             return build_detection_train_loader(cfg, mapper=mapper)
         else:
             mapper = None
@@ -269,14 +273,30 @@ def setup(args):
     Create configs and perform basic setups.
     """
     cfg = get_cfg()
+    cfg.NAME = "KMax"
     # for poly lr schedule
     add_deeplab_config(cfg)
     add_kmax_deeplab_config(cfg)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+    
+    if args.num_gpus == 1:
+        cfg.MODEL.RESNETS.NORM = "BN"
+        cfg.MODEL.SEM_SEG_HEAD.NORM = "BN"
+        
     cfg.freeze()
     default_setup(cfg, args)
     setup_logger(output=cfg.OUTPUT_DIR, distributed_rank=comm.get_rank(), name="kmax_deeplab")
+    
+    if comm.get_rank() == 0 and cfg.WANDB.ENABLED:
+        wandb.init(project=cfg.WANDB.PROJECT,
+                   entity=cfg.WANDB.ENTITY,
+                   name=cfg.NAME,
+                   config=cfg,
+                   sync_tensorboard=True,
+                   resume="allow",
+                   settings=wandb.Settings(start_method="fork"))
+    
     return cfg
 
 
@@ -296,7 +316,15 @@ def main(args):
 
     trainer = Trainer(cfg)
     trainer.resume_or_load(resume=args.resume)
-    return trainer.train()
+    res =  trainer.train()
+    
+    if comm.get_rank() == 0 and cfg.WANDB.ENABLED:
+        artifact = wandb.Artifact('model', type='model')
+        artifact.add_file(os.path.join(cfg.OUTPUT_DIR, "model_final.pth", ))
+        wandb.log_artifact(artifact)
+        wandb.finish()
+
+    return res
 
 
 if __name__ == "__main__":
@@ -307,6 +335,6 @@ if __name__ == "__main__":
         args.num_gpus,
         num_machines=args.num_machines,
         machine_rank=args.machine_rank,
-        dist_url=args.dist_url,
+        dist_url="auto",
         args=(args,),
     )

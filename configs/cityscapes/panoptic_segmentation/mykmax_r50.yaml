@@ -4,8 +4,8 @@ MODEL:
     FREEZE_AT: 0
     NAME: "custom_bn_build_resnet_backbone" # we customize the momentum and eps in syncbn, to align with tf implementation.
   WEIGHTS: "pretrained_models/R-50.pkl"
-  PIXEL_MEAN: [127.5, 127.5, 127.5]
-  PIXEL_STD: [127.5, 127.5, 127.5]
+  PIXEL_MEAN: [123.675, 116.280, 103.530]
+  PIXEL_STD: [58.395, 57.120, 57.375]
   RESNETS:
     DEPTH: 50
     STEM_TYPE: "basic"  # not used
@@ -49,12 +49,12 @@ MODEL:
     TRANS_DEC:
       NAME: "kMaXTransformerDecoder"
       DEC_LAYERS: [2, 2, 2]
-      NUM_OBJECT_QUERIES: 256
+      NUM_OBJECT_QUERIES: 128
       IN_CHANNELS: [2048, 1024, 512, 128] # [512 * 4, 256 * 4, 128 * 4], the last dim is for final prediction
       DROP_PATH_PROB: 0.2
 
     TEST:
-      SEMANTIC_ON: True
+      SEMANTIC_ON: False
       INSTANCE_ON: False
       PANOPTIC_ON: True
       PIXEL_CONFIDENCE_THRESHOLD: 0.4
@@ -68,10 +68,10 @@ DATASETS:
   TRAIN: ("cityscapes_fine_panoptic_train",)
   TEST: ("cityscapes_fine_panoptic_val",)
 SOLVER:
-  IMS_PER_BATCH: 2
-  BASE_LR: 0.0003
+  IMS_PER_BATCH: 6
+  BASE_LR: 0.0001
   LR_SCHEDULER_NAME: "TF2WarmupPolyLR"
-  MAX_ITER: 60000
+  MAX_ITER: 90000
   WARMUP_ITERS: 5000
   WEIGHT_DECAY: 0.05
   OPTIMIZER: "ADAMW"
@@ -81,16 +81,20 @@ SOLVER:
   AMP:
     ENABLED: True
 INPUT:
-  IMAGE_SIZE: [1024, 2048]
-  MIN_SCALE: 0.5
-  MAX_SCALE: 2.0
-  FORMAT: "RGB"
-  DATASET_MAPPER_NAME: "cityscapes_panoptic_lsj"
+  MIN_SIZE_TRAIN: !!python/object/apply:eval ["[int(x * 0.1 * 1024) for x in range(5, 21)]"]
+  MIN_SIZE_TRAIN_SAMPLING: "choice"
+  MAX_SIZE_TRAIN: 4096
   MIN_SIZE_TEST: 1024
   MAX_SIZE_TEST: 2048
+  DATASET_MAPPER_NAME: "panoptic_mapper"
+  CROP:
+    ENABLED: True
+    TYPE: "absolute"
+    SIZE: (512, 1024)
+    SINGLE_CATEGORY_MAX_AREA: 1.0
 TEST:
-  EVAL_PERIOD: 1000
+  EVAL_PERIOD: 5000
 DATALOADER:
   FILTER_EMPTY_ANNOTATIONS: True
-  NUM_WORKERS: 4
+  NUM_WORKERS: 8
 VERSION: 2

@@ -42,8 +42,8 @@ def compute_mask_similarity(inputs: torch.Tensor, targets: torch.Tensor,
     inputs = inputs.flatten(1) # N x HW
 
     pixel_gt_non_void_mask = (targets.sum(0, keepdim=True) > 0).to(inputs) # 1xHW
-    if masking_void_pixel:
-        inputs = inputs * pixel_gt_non_void_mask
+    # if masking_void_pixel:
+    #     inputs = inputs * pixel_gt_non_void_mask
 
     intersection = torch.einsum("nc,mc->nm", inputs, targets)
     denominator = (inputs.sum(-1)[:, None] + targets.sum(-1)[None, :]) / 2.0

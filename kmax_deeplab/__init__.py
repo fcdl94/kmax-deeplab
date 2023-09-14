@@ -5,6 +5,7 @@ from . import modeling
 from .config import add_kmax_deeplab_config
 
 # dataset loading
+from .data.dataset_mappers.panoptic_dataset_mapper import PanopticDatasetMapper
 from .data.dataset_mappers.panoptic_kmaxdeeplab_dataset_mapper import PanoptickMaXDeepLabDatasetMapper
 
 

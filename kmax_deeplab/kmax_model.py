@@ -225,17 +225,17 @@ class kMaXDeepLab(nn.Module):
         """
         images = [x["image"].to(self.device) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
-        if "is_real_pixels" in batched_inputs[0]:
-            is_real_pixels = [x["is_real_pixels"] for x in batched_inputs]
-            # Set all padded pixel values to 0.
-            images = [x * y.to(x) for x, y in zip(images, is_real_pixels)]
+        # if "is_real_pixels" in batched_inputs[0]:
+        #     is_real_pixels = [x["is_real_pixels"] for x in batched_inputs]
+        #     # Set all padded pixel values to 0.
+        #     images = [x * y.to(x) for x, y in zip(images, is_real_pixels)]
 
         # We perform zero padding to ensure input shape equal to self.input_shape.
         # The padding is done on the right and bottom sides. 
-        for idx in range(len(images)):
-            cur_height, cur_width = images[idx].shape[-2:]
-            padding = (0, max(0, self.input_shape[1] - cur_width), 0, max(0, self.input_shape[0] - cur_height), 0, 0)
-            images[idx] = F.pad(images[idx], padding, value=0)
+        # for idx in range(len(images)):
+        #     cur_height, cur_width = images[idx].shape[-2:]
+        #     padding = (0, max(0, self.input_shape[1] - cur_width), 0, max(0, self.input_shape[0] - cur_height), 0, 0)
+        #     images[idx] = F.pad(images[idx], padding, value=0)
         images = ImageList.from_tensors(images, -1)
 
         if self.training:
@@ -280,7 +280,7 @@ class kMaXDeepLab(nn.Module):
             mask_cls_results = outputs["pred_logits"]
             mask_pred_results = outputs["pred_masks"]
 
-            align_corners = (images.tensor.shape[-1] % 2 == 1) 
+            align_corners = False
             # upsample masks
             mask_pred_results = F.interpolate(
                 mask_pred_results,
@@ -300,7 +300,7 @@ class kMaXDeepLab(nn.Module):
                 cur_image = input_per_image["image"].to(self.device)
                 processed_results.append({})
                 scale_factor = max(images.tensor.shape[-2:]) / max(height, width)
-                ori_height, ori_width = round(height * scale_factor), round(width * scale_factor)
+                ori_height, ori_width = int(height * scale_factor), int(width * scale_factor)
                 mask_pred_result = mask_pred_result[:, :ori_height, :ori_width].expand(1, -1, -1, -1)
                 cur_image = cur_image[:, :ori_height, :ori_width].expand(1, -1, -1, -1)
                 mask_pred_result = F.interpolate(
