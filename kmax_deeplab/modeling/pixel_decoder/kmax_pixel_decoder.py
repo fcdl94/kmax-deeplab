@@ -103,9 +103,15 @@ class RelativePositionalEncoding(nn.Module):
         trunc_normal_(self._embeddings.weight, std=1.0)
         self.depth = depth
 
+<<<<<<< HEAD
     def forward(self, query_length, key_length):
         _relative_distance_matrix = _compute_relative_distance_matrix(query_length, key_length)
         return self._embeddings.weight[_relative_distance_matrix.reshape(-1)].reshape(query_length, key_length, self.depth)
+=======
+    def forward(self, query_lenght, key_length):
+        _relative_distance_matrix = _compute_relative_distance_matrix(query_length, key_length)
+        return self._embeddings.weight[self._relative_distance_matrix.reshape(-1)].reshape(query_length, key_length, self.depth)
+>>>>>>> 9110d89ad9cd07840ebf4a1bc814b4a13da1ebb8
 
 
 # https://github.com/google-research/deeplab2/blob/main/model/layers/axial_layers.py#L36
